@@ -33,10 +33,102 @@ var options = {
 var socket = new FramingSocket(options);
 var rpc_id = 123;                                   // Unique RPC ID to identify this request (unique to this connection)
 
-socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03])).
-    then(function on_success(frame) {
-        // do something with the returned frame (minus the frame_length bytes)
-    });
+socket.connect('localhost', 8888).then(function on_connect() {
+    return socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
+}).then(function on_success(frame) {
+    // do something with the returned frame (minus the frame_length bytes)
+    // ....
+    return socket.close();
+}).then(function on_closed() {
+    // socket closed
+});
+```
+
+## Usage
+
+### connect(host,port)
+Creates a new socket and returns a promise
+
+```js
+framing_socket.connect(host, port).then(function on_connect() {
+    // socket is now connected successfully...
+}).otherwise(function on_error() {
+    // failed to connect
+});;
+```
+
+### close()
+Closes an existing socket and returns a promise.
+
+```js
+framing_socket.close().always(function on_close() {
+    // socket closed!
+});
+```
+
+### write(rpc_id, data)
+Write data to the socket and returns a promise for the response data.
+The RPC ID is used to match the request and response together.
+
+```js
+var rpc_id = 123;
+var data = new Buffer('abcd', 'utf8');
+framing_socket.write(rpc_id, data).then(function on_response(frame) {
+    // got result frame (Buffer)! do something with it.
+});
+```
+
+### fail_pending_rpcs()
+Fails (rejects) all pending RPCs and calls their errbacks.
+
+```js
+var rpc_id = 123;
+var data = new Buffer('abcd', 'utf8');
+framing_socket.write(rpc_id, data).then(function on_response(frame) {
+    // let's assume no response arrives yet...
+}).otherwise(function on_error(err) {
+    console.log('Oops!');
+});
+
+framing_socket.fail_pending_rpcs();
+// Outputs 'Oops!'
+```
+
+### event: disconnected(host, port, last_err)
+When the connection has an unplanned disconnection. It includes the last detected error object.
+It is not emitted when close() is called.
+
+```js
+framing_socket.on('disconnected', function on_disconnected(host, port, last_err) {
+    // This was unplanned.  Try to reconnect?
+});
+```
+
+### event: timeout(host, port)
+When the socket times out.  The user can decide to what to do after this.
+
+```js
+framing_socket.on('timeout', function on_timeout(host, port) {
+    // Socket timed out.  Try to reconnect or fail everything?
+});
+```
+
+### event: pause(host, port)
+Sent when it wants the user to pause upstream events including the server's host/port.
+
+```js
+framing_socket.on('pause', function on_pause(host, port) {
+    // Please slow down!
+});
+```
+
+### event: resume(host, port)
+Sent when the user can continue - including the server's host/port for reference.
+
+```js
+framing_socket.on('resume', function on_resume(host, port) {
+    // Ok, go nuts.
+});
 ```
 
 ## Install

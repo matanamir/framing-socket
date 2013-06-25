@@ -25,6 +25,9 @@
  *  - write(rpc_id, data):
  *      Write data to the socket and returns a promise for the response data.
  *      The RPC ID is used to match the request and response together.
+ *  - fail_pending_rpcs():
+ *      Fails (rejects) all pending RPCs and calls the errbacks of all queued
+ *      promises.
  *
  *
  * Events published:
@@ -137,12 +140,6 @@ module.exports = function(OffsetBuffer,
          */
         this.rpc_id_reader = (options && options.rpc_id_reader) ||
             rpc_id_reader;
-
-        /**
-         * ------------------------------------------------------------
-         * Variables to keep track for framing
-         * ------------------------------------------------------------
-         */
 
         /**
          * Keeps track of the expected length of the currently processed
