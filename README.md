@@ -2,10 +2,11 @@
 
 [![Build Status](https://travis-ci.org/matanamir/framing-socket.png)](https://travis-ci.org/matanamir/framing-socket)
 
-FramingSocket adds variable size framing and simple promise-based request/response notifications to normal sockets.
+FramingSocket adds variable size framing and simple promise-based notifications to normal sockets.
 
 Note that the FramingSocket assumes a request/response protocol of some form where the first frame bytes are the
-size of the frame, and each frame response contains an RPC ID to associate it with the sent request.
+size of the frame, and each frame response contains an RPC ID to associate it with the sent request.  It uses the
+[FramingBuffer][1] internally to handle this framing.
 
 The user can define their own frame_length reader function and rpc_id reader function to find and parse those
 values from the frame.
@@ -146,3 +147,5 @@ npm test
 ## License
 
 MIT License
+
+[1]: https://github.com/matanamir/framing-buffer

@@ -1,5 +1,4 @@
-var BufferGroup = require('buffer-group'),
-    OffsetBuffer = require('offset-buffer'),
+var FramingBuffer = require('framing-buffer'),
     debug = false,
     net = require('net'),
     events = require('events'),
@@ -8,8 +7,7 @@ var BufferGroup = require('buffer-group'),
     errors = require('./errors.js')(util);
 
 module.exports = require('./framing-socket.js')(
-    OffsetBuffer,
-    BufferGroup,
+    FramingBuffer,
     debug,
     net,
     events,

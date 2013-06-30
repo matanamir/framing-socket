@@ -3,16 +3,15 @@
  *
  * Contains the details of the socket connection and any lifecycle code around
  * that socket connection.  It also takes care of framing and associating
- * response data with the proper request.  Note that this FramingSocket assumes
- * a request/response protocol of some form where the first frame bytes are the
- * frame size, and each frame response contains an RPC ID to associate it with
+ * response data with the proper request.  Note that his FramingSocket
+ * assumes that each frame response contains an RPC ID to associate it with
  * the sent request.
  *
  * The user may (and should) provide to the constructor of each instance two custom
  * functions:
  *
  *  - A frame length detection function which would be used to find and parse the
- *    frame length.
+ *    frame length (delegated to the internal FramingBuffer).
  *  - A "RPC ID" detection function which would be used to detect the RPC ID in
  *    the response.
  *
@@ -44,8 +43,7 @@
  *      Sent when the user can continue - including the server's host/port for
  *      reference
  */
-module.exports = function(OffsetBuffer,
-                          BufferGroup,
+module.exports = function(FramingBuffer,
                           debug,
                           net,
                           events,
@@ -122,16 +120,15 @@ module.exports = function(OffsetBuffer,
         this.pending_deferreds = {};
 
         /**
-         * The length of the frame_length field in bytes.
+         * Internal framing buffer that deals with framing the incoming
+         * data into proper frames
          */
-        this.frame_length_size = (options && options.frame_length_size) || 4;
+        this.framing_buffer = null;
 
         /**
-         * The reader used to read the frame_length from the buffer.  It is
-         * passed in an OffsetBuffer to read from.
+         * Keep a reference to the passed in options
          */
-        this.frame_length_reader = (options && options.frame_length_reader) ||
-            frame_length_reader;
+        this.options = options;
 
         /**
          * The reader used to read the rpc_id from the buffer.  It is passed
@@ -140,26 +137,6 @@ module.exports = function(OffsetBuffer,
          */
         this.rpc_id_reader = (options && options.rpc_id_reader) ||
             rpc_id_reader;
-
-        /**
-         * Keeps track of the expected length of the currently processed
-         * result frame.  We also use this as our FSM flag:
-         *
-         *   >0: we assume any data that arrives is part of the
-         *       current_frame_buffer.
-         *
-         *    0: we assume that new data that arrives is the start of a
-         *       new frame.
-         */
-        this.current_frame_length = 0;
-
-        /**
-         * Buffer of the current response data.  We'll need to do
-         * our own framing of the stream to understand when one response
-         * ends, and another begins. We'll buffer a response until a frame
-         * ends before resolving the promise from the write().
-         */
-        this.current_frame_buffer = new BufferGroup();
 
         events.EventEmitter.call(this);
     }
@@ -180,6 +157,8 @@ module.exports = function(OffsetBuffer,
         this.closed = false;
         this.last_socket_error = null;
         this.num_false_writes = 0;
+        // create a new FramingBuffer on each connect
+        this.framing_buffer = new FramingBuffer(this.options);
         this.socket = net.connect({
             host: host,
             port: port
@@ -310,55 +289,13 @@ module.exports = function(OffsetBuffer,
     };
 
     /**
-     * We'll need a simple FSM here to buffer data and frame the data properly.
+     * When a full frame comes in via the FrameBuffer, extract the RPC ID
+     * and cross reference it with our pending deferreds so the proper
+     * promise can be resolved.
      */
-    FramingSocket.prototype.on_socket_data = function(data_buffer) {
-        var self = this,
-            frame_length = this.current_frame_length,
-            frame_buffer = this.current_frame_buffer;
-
-        function check_and_extract_frame() {
-            var rpc_id,
-                full_frame;
-            if (frame_buffer.length >= frame_length) {
-                // we're in business!  We've got at least the data we need
-                // for a frame (any maybe more). Our BufferGroup will take
-                // care of the details of extracting just the bytes we need
-                // for this frame and keep the rest intact.
-                full_frame = frame_buffer.extract(frame_length);
-                // now we reset the frame state and call the relevant deferred...
-                frame_length = self.current_frame_length = 0;
-                rpc_id = self.rpc_id_reader(full_frame);
-                self.resolve_deferred(rpc_id, full_frame);
-            }
-        }
-
-        //  First, buffer the data
-        //  If current_frame_length === 0 we're expecting a new frame...
-        //      If have enough data in the buffer to get the frame size?
-        //          Extract it from the buffer so it only contains
-        //          the frame data.  If the data also includes the
-        //          whole frame, we can go ahead and emit
-        //          the result, then reset the current_frame_length
-        //          instead of waiting for another data event.
-        //      If there isn't enough data for the key, keep buffering
-        //  If current_frame_length > 0 we're in the middle of a frame...
-        //      If we have enough data to parse the frame?
-        //          Do it, reset the state (current_frame_length,
-        //          current_frame_buffer).  If there is any data left
-        //          over, start at the top...
-        frame_buffer.push(data_buffer);
-        if (frame_length  === 0) {
-            if (frame_buffer.length >= this.frame_length_size) {
-                // TODO: there are some performance improvements we can make here on the occasion
-                // TODO: that the full frame length and full frame data is passed in at once.
-                frame_length = this.current_frame_length =
-                    this.frame_length_reader(frame_buffer.extract(this.frame_length_size));
-                check_and_extract_frame();
-            }
-        } else {
-            check_and_extract_frame();
-        }
+    FramingSocket.prototype.on_frame = function(full_frame) {
+        var rpc_id = this.rpc_id_reader(full_frame);
+        this.resolve_deferred(rpc_id, full_frame);
     };
 
     /**
@@ -396,6 +333,11 @@ module.exports = function(OffsetBuffer,
         this.on_socket_close(false);
     };
 
+    /**
+     * We won't clear the FramingBuffer data here intentionally since maybe the user wants to
+     * analyze what's in it.  We do, however, clobber it with a new instance if the user
+     * tries to connection again.
+     */
     FramingSocket.prototype.clean_up_socket = function() {
         if (!this.closed) {
             this.closed = true;
@@ -419,6 +361,9 @@ module.exports = function(OffsetBuffer,
     FramingSocket.prototype.register_socket_events = function() {
         var self = this;
 
+        this.framing_buffer.on('frame', function on_frame(frame) {
+            self.on_frame(frame);
+        });
         this.socket.on('error', function on_socket_error() {
             self.on_socket_error();
         });
@@ -426,7 +371,7 @@ module.exports = function(OffsetBuffer,
             self.on_socket_close(had_error);
         });
         this.socket.on('data', function on_socket_data(data) {
-            self.on_socket_data(data);
+            self.framing_buffer.push(data);
         });
         this.socket.on('end', function on_socket_end() {
             self.on_socket_end();
@@ -440,6 +385,7 @@ module.exports = function(OffsetBuffer,
      * Removes listeners to all the socket events for convenience
      */
     FramingSocket.prototype.remove_socket_events = function() {
+        this.framing_buffer.removeAllListeners('frame');
         this.socket.removeAllListeners('error');
         this.socket.removeAllListeners('close');
         this.socket.removeAllListeners('data');
@@ -447,11 +393,6 @@ module.exports = function(OffsetBuffer,
         this.socket.removeAllListeners('timeout'); // this is set to "once"
         this.socket.removeAllListeners('drain'); // this is set to "once"
     };
-
-    // Default frame_length_reader
-    function frame_length_reader(offset_buffer) {
-        return offset_buffer.readInt32BE();
-    }
 
     // Default rpc_id_reader
     function rpc_id_reader(offset_buffer) {

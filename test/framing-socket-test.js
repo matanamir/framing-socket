@@ -6,11 +6,9 @@ var test = require('tap').test,
     debug = true,
     when = require('when'),
     errors = require('../errors.js')(util),
-    OffsetBuffer = require('offset-buffer'),
-    BufferGroup = require('buffer-group'),
+    FramingBuffer = require('framing-buffer'),
     FramingSocket = require('../framing-socket.js')(
-        OffsetBuffer,
-        BufferGroup,
+        FramingBuffer,
         debug,
         net,
         events,
@@ -165,86 +163,21 @@ test('resolve_deferred()', function(t) {
     });
 });
 
-test('on_socket_data()', function(t) {
+test('on_frame()', function(t) {
     var request_buffer = new Buffer([0x01]),
         request_rpc = 1;
-    t.test('Full key and full data.  Exact size.', function(t) {
-        after_connection(t, function(con) {
-            var data_frame, expected;
-            data_frame = new OffsetBuffer(4 + 4 + 4);
-            data_frame.writeInt32BE(8); // length
-            data_frame.writeInt32BE(request_rpc); // rpc id
-            data_frame.writeInt32BE(100); // some data
-            expected = data_frame.buf.slice(4);
-            con.write(request_rpc, request_buffer).then(function(frame) {
-                t.ok(buffer_equal(frame.buf, expected), 'Returned frame matched expected frame');
-                t.end();
-            });
-            con.socket.emit('data', data_frame.buf);
+    after_connection(t, function(con) {
+        var data_frame, expected;
+        data_frame = new Buffer(4 + 4 + 4);
+        data_frame.writeInt32BE(8, 0); // length
+        data_frame.writeInt32BE(request_rpc, 4); // rpc id
+        data_frame.writeInt32BE(100, 8); // some data
+        expected = data_frame.slice(4);
+        con.write(request_rpc, request_buffer).then(function(frame) {
+            t.ok(buffer_equal(frame.buf, expected), 'Returned frame matched expected frame');
+            t.end();
         });
-    });
-    t.test('Full key and then data in 2 parts.', function(t) {
-        after_connection(t, function(con) {
-            var data_frame1,
-                data_frame2,
-                expected;
-            data_frame1 = new OffsetBuffer(4 + 4);
-            data_frame1.writeInt32BE(8); // length
-            data_frame1.writeInt32BE(request_rpc); // rpc id
-            data_frame2 = new OffsetBuffer(4);
-            data_frame2.writeInt32BE(100); // some data
-            expected = Buffer.concat([data_frame1.buf.slice(4), data_frame2.buf]);
-            con.write(request_rpc, request_buffer).then(function(frame) {
-                t.ok(buffer_equal(frame.buf, expected), 'Returned frame matched the expected frame');
-                t.end();
-            });
-            con.socket.emit('data', data_frame1.buf);
-            con.socket.emit('data', data_frame2.buf);
-        });
-    });
-    t.test('Key in 2 parts where second has full data.', function(t) {
-        after_connection(t, function(con) {
-            var data_frame1,
-                data_frame2,
-                expected;
-            data_frame1 = new OffsetBuffer(2);
-            data_frame1.writeInt16BE(0); // length part 1
-            data_frame2 = new OffsetBuffer(10);
-            data_frame2.writeInt16BE(8); // length part 2
-            data_frame2.writeInt32BE(request_rpc); // rpc id
-            data_frame2.writeInt32BE(100); // some data
-            expected = data_frame2.buf.slice(2);
-            con.write(request_rpc, request_buffer).then(function(frame) {
-                t.ok(buffer_equal(frame.buf, expected), 'Returned frame matched the expected frame');
-                t.end();
-            });
-            con.socket.emit('data', data_frame1.buf);
-            con.socket.emit('data', data_frame2.buf);
-        });
-    });
-    t.test('Key in 2 parts, and data in 2 parts with some extra past the frame.', function(t) {
-        after_connection(t, function(con) {
-            var data_frame1,
-                data_frame2,
-                data_frame3,
-                expected;
-            data_frame1 = new OffsetBuffer(2);
-            data_frame1.writeInt16BE(0); // length part 1
-            data_frame2 = new OffsetBuffer(6);
-            data_frame2.writeInt16BE(8); // length part 2
-            data_frame2.writeInt32BE(request_rpc); // rpc id
-            data_frame3 = new OffsetBuffer(8);
-            data_frame3.writeInt32BE(100); // some data
-            data_frame3.writeInt32BE(200); // some data outside the frame
-            expected = Buffer.concat([data_frame2.buf.slice(2), data_frame3.buf.slice(0, 4)]);
-            con.write(request_rpc, request_buffer).then(function(frame) {
-                t.ok(buffer_equal(frame.buf, expected), 'Returned frame matched the expected frame');
-                t.end();
-            });
-            con.socket.emit('data', data_frame1.buf);
-            con.socket.emit('data', data_frame2.buf);
-            con.socket.emit('data', data_frame3.buf);
-        });
+        con.socket.emit('data', data_frame);
     });
 });
 

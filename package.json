@@ -5,8 +5,7 @@
     "description": "Node.js socket wrapper which provides variable size framing and request/response association",
     "main": "index.js",
     "dependencies": {
-        "buffer-group": "*",
-        "offset-buffer": "*",
+        "framing-buffer": "*",
         "when": "*"
     },
     "devDependencies": {
