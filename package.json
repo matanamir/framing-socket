@@ -1,6 +1,6 @@
 {
     "name": "framing-socket",
-    "version": "0.0.1",
+    "version": "0.0.2",
     "author": "Matan Amir <github-contrib@ematan.com> (http://www.n0tw0rthy.com)",
     "description": "Node.js socket wrapper which provides variable size framing and request/response association",
     "main": "index.js",
