@@ -75,6 +75,7 @@ module.exports = function(FramingBuffer,
      *      frame_length_reader: function(offset_buffer) {
      *          return offset_buffer.readInt32BE();
      *      },
+     *      rpc_id_length: 4,
      *      rpc_id_reader: function(offset_buffer) {
      *          return offset_buffer.readInt32BE();
      *      }
@@ -131,11 +132,16 @@ module.exports = function(FramingBuffer,
         this.options = options;
 
         /**
+         * The length of the rpc_id field to use in bytes
+         */
+        this.rpc_id_length = (options && options.rpc_id_length) ? options.rpc_id_length : 4;
+
+        /**
          * The reader used to read the rpc_id from the buffer.  It is passed
          * in an OffsetBuffer.  The read offset is after the frame_length
          * already.
          */
-        this.rpc_id_reader = (options && options.rpc_id_reader) ||
+        this.rpc_id_reader = (options && options.rpc_id_reader) ? options.rpc_id_reader :
             rpc_id_reader;
 
         events.EventEmitter.call(this);
