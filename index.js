@@ -1,4 +1,5 @@
 var FramingBuffer = require('framing-buffer'),
+    OffsetBuffer = require('offset-buffer'),
     debug = false,
     net = require('net'),
     events = require('events'),
@@ -8,6 +9,7 @@ var FramingBuffer = require('framing-buffer'),
 
 module.exports = require('./framing-socket.js')(
     FramingBuffer,
+    OffsetBuffer,
     debug,
     net,
     events,

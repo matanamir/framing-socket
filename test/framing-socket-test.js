@@ -7,8 +7,10 @@ var test = require('tap').test,
     when = require('when'),
     errors = require('../errors.js')(util),
     FramingBuffer = require('framing-buffer'),
+    OffsetBuffer = require('offset-buffer'),
     FramingSocket = require('../framing-socket.js')(
         FramingBuffer,
+        OffsetBuffer,
         debug,
         net,
         events,
@@ -195,7 +197,7 @@ test('on_socket_drain()', function(t) {
         con.on('resume', function() {
             t.ok(true, 'Emits \'resume\' event when receives \'drain\' event from the socket');
         });
-        con.write(new Buffer([0x01, 0x02, 0x03]));
+        con.write(1, new Buffer([0x01, 0x02, 0x03]));
         con.socket.emit('drain');
     });
 });

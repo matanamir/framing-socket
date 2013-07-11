@@ -44,6 +44,7 @@
  *      reference
  */
 module.exports = function(FramingBuffer,
+                          OffsetBuffer,
                           debug,
                           net,
                           events,
@@ -71,13 +72,19 @@ module.exports = function(FramingBuffer,
     /**
      * Ctor. The user should provide the following options (defaults shown):
      * {
-     *      frame_length_size: 4;
+     *      frame_length_size: 4,
+     *      frame_length_writer: function(offset_buffer, frame_length) {
+     *          offset_buffer.writeInt32BE(frame_length);
+     *      },
      *      frame_length_reader: function(offset_buffer) {
      *          return offset_buffer.readInt32BE();
      *      },
-     *      rpc_id_length: 4,
+     *      rpc_id_size: 4,
      *      rpc_id_reader: function(offset_buffer) {
      *          return offset_buffer.readInt32BE();
+     *      },
+     *      rpc_id_writer: function(offset_buffer, rpc_id) {
+     *          offset_buffer.writeInt32BE(rpc_id);
      *      }
      * }
      */
@@ -132,9 +139,16 @@ module.exports = function(FramingBuffer,
         this.options = options;
 
         /**
+         * The writer used to write the frame length into bytes.  It is passed an
+         * OffsetBuffer and the frmae_length to write.
+         */
+        this.frame_length_writer = (options && options.frame_length_writer) ? options.frame_length_writer :
+            frame_length_writer;
+
+        /**
          * The length of the rpc_id field to use in bytes
          */
-        this.rpc_id_length = (options && options.rpc_id_length) ? options.rpc_id_length : 4;
+        this.rpc_id_size = (options && options.rpc_id_size) ? options.rpc_id_size : 4;
 
         /**
          * The reader used to read the rpc_id from the buffer.  It is passed
@@ -143,6 +157,13 @@ module.exports = function(FramingBuffer,
          */
         this.rpc_id_reader = (options && options.rpc_id_reader) ? options.rpc_id_reader :
             rpc_id_reader;
+
+        /**
+         * The reader used to write the rpc_id to the buffer.  It is passed
+         * in an OffsetBuffer and the rpc_id to write.
+         */
+        this.rpc_id_writer = (options && options.rpc_id_writer) ? options.rpc_id_writer :
+            rpc_id_writer;
 
         events.EventEmitter.call(this);
     }
@@ -210,7 +231,7 @@ module.exports = function(FramingBuffer,
         }
 
         // I assume this will emit an 'error' event if the socket is closed
-        if (!this.socket.write(data)) {
+        if (!this.write_frame(this.socket, rpc_id, data)) {
             this.num_false_writes++;
             this.socket.once('drain', function() {
                 self.on_socket_drain();
@@ -400,9 +421,42 @@ module.exports = function(FramingBuffer,
         this.socket.removeAllListeners('drain'); // this is set to "once"
     };
 
-    // Default rpc_id_reader
+    /** Writes the data provided to the client to the socket in the proper
+     * frame format.
+     *
+     * At this point, i haven't concluded if multiple writes is better/worse
+     * than creating a new Buffer and copying all the data to it.  This depends
+     * on the underlying Node.js behavior around socket write buffering.  The
+     * answer will be in libuv.
+     *
+     * This function returns a true/false value based on the need to deal with
+     * back pressure (the same way socket.write()) works.
+     *
+     * TODO: come to a conclusion on this!
+     */
+    FramingSocket.prototype.write_frame = function(socket, rpc_id, data) {
+        var frame_length_size = this.framing_buffer.frame_length_size,
+            rpc_id_size = this.rpc_id_size,
+            frame_prefix = new OffsetBuffer(rpc_id_size + frame_length_size),
+            result;
+
+        this.frame_length_writer(frame_prefix, data.length + rpc_id_size);
+        this.rpc_id_writer(frame_prefix, rpc_id);
+        result = socket.write(frame_prefix.buf);
+        return socket.write(data) && result;
+    };
+
+    // Default readers / writers
     function rpc_id_reader(offset_buffer) {
         return offset_buffer.readInt32BE();
+    }
+
+    function rpc_id_writer(offset_buffer, rpc_id) {
+        offset_buffer.writeInt32BE(rpc_id);
+    }
+
+    function frame_length_writer(offset_buffer, frame_length) {
+        offset_buffer.writeInt32BE(frame_length);
     }
 
     function create_rpc_key(rpc_id) {
