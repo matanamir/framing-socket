@@ -39,6 +39,16 @@ module.exports = function (util) {
      * ---------------------------------------------------------------------
      */
 
+    errors.HostUnavailableError = function(message) {
+        Error.call(this);
+        this.name = 'HostUnavailableError';
+        this.message = message;
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, errors.HostUnavailableError);
+        }
+    };
+    util.inherits(errors.HostUnavailableError, errors.RecoverableError);
+
     errors.AlreadyConnectedError = function(message) {
         Error.call(this);
         this.name = 'AlreadyConnectedError';
