@@ -54,11 +54,6 @@ module.exports = function(FramingBuffer,
                           logger) {
 
     /**
-     * The timeout delay in milliseconds
-     */
-    var timeout = 5000;
-
-    /**
      * Delay between the last packet and the first keep alive probe in milliseconds
      */
     var keep_alive_delay = 1000;
@@ -72,6 +67,7 @@ module.exports = function(FramingBuffer,
     /**
      * Ctor. The user should provide the following options (defaults shown):
      * {
+     *      timeout_ms: 5000,
      *      frame_length_size: 4,
      *      frame_length_writer: function(offset_buffer, frame_length) {
      *          offset_buffer.writeInt32BE(frame_length);
@@ -89,6 +85,15 @@ module.exports = function(FramingBuffer,
      * }
      */
     function FramingSocket(options) {
+
+        options = options || {};
+
+        /**
+         * A name to give this FramingSocket for logging purposes.
+         * This is set to the <host>:<port> when the socket connects
+         * to a host and stays that way until it the socket is closed.
+         */
+        this.name = 'disconnected';
 
         /**
          * The raw socket used to communicate with the server.
@@ -134,36 +139,36 @@ module.exports = function(FramingBuffer,
         this.framing_buffer = null;
 
         /**
-         * Keep a reference to the passed in options
+         * Keep a reference to the passed in options so we can relay
+         * them to the FrameBuffer
          */
         this.options = options;
 
+        this.timeout_ms = options.timeout_ms || 5000;
+
         /**
          * The writer used to write the frame length into bytes.  It is passed an
-         * OffsetBuffer and the frmae_length to write.
+         * OffsetBuffer and the frame_length to write.
          */
-        this.frame_length_writer = (options && options.frame_length_writer) ? options.frame_length_writer :
-            frame_length_writer;
+        this.frame_length_writer = options.frame_length_writer || frame_length_writer;
 
         /**
          * The length of the rpc_id field to use in bytes
          */
-        this.rpc_id_size = (options && options.rpc_id_size) ? options.rpc_id_size : 4;
+        this.rpc_id_size = options.rpc_id_size || 4;
 
         /**
          * The reader used to read the rpc_id from the buffer.  It is passed
          * in an OffsetBuffer.  The read offset is after the frame_length
          * already.
          */
-        this.rpc_id_reader = (options && options.rpc_id_reader) ? options.rpc_id_reader :
-            rpc_id_reader;
+        this.rpc_id_reader = options.rpc_id_reader || rpc_id_reader;
 
         /**
          * The reader used to write the rpc_id to the buffer.  It is passed
          * in an OffsetBuffer and the rpc_id to write.
          */
-        this.rpc_id_writer = (options && options.rpc_id_writer) ? options.rpc_id_writer :
-            rpc_id_writer;
+        this.rpc_id_writer = options.rpc_id_writer || rpc_id_writer;
 
         events.EventEmitter.call(this);
     }
@@ -179,8 +184,9 @@ module.exports = function(FramingBuffer,
             deferred = when.defer();
 
         if (this.socket) {
-            deferred.reject(new errors.AlreadyConnectedError('Already connected to: ' + socket_host_port(this.socket)));
+            deferred.reject(new errors.AlreadyConnectedError('Already connected to: ' + this.name));
         }
+        this.name = host + ':' + port;
         this.closed = false;
         this.last_socket_error = null;
         this.num_false_writes = 0;
@@ -193,7 +199,7 @@ module.exports = function(FramingBuffer,
             self.on_socket_connect();
             deferred.resolve();
         });
-        self.register_socket_events();
+        this.register_socket_events(deferred);
         return deferred.promise;
     };
 
@@ -253,10 +259,15 @@ module.exports = function(FramingBuffer,
     };
 
     FramingSocket.prototype.on_socket_connect = function() {
+        // first since we connected, set the error event handler to exclude the connecting deferred
+        this.socket.removeAllListeners('error');
+        this.socket.on('error', function on_socket_error(err) {
+            self.on_socket_error(err);
+        });
         this.socket.setKeepAlive(true, keep_alive_delay);
         this.socket.setNoDelay(true);
-        this.socket.setTimeout(timeout);
-        logger.info('FramingSocket.connect - Successfully connected to: ' + socket_host_port(this.socket));
+        this.socket.setTimeout(this.timeout_ms);
+        logger.info('FramingSocket.connect - Successfully connected to: ' + this.name);
     };
 
     /**
@@ -265,7 +276,7 @@ module.exports = function(FramingBuffer,
      * something else.
      */
     FramingSocket.prototype.on_socket_timeout = function() {
-        logger.info('FramingSocket.on_socket_timeout - ' + socket_host_port(this.socket) + ' timed out (' + timeout + 'ms).  ');
+        logger.info('FramingSocket.on_socket_timeout - ' + this.name + ' timed out (' + this.timeout_ms + 'ms).  ');
         this.emit('timeout', this.socket.remoteAddress, this.socket.remotePort);
     };
 
@@ -274,7 +285,7 @@ module.exports = function(FramingBuffer,
      */
     FramingSocket.prototype.on_socket_error = function(err) {
         this.last_socket_error = err;
-        logger.info('FramingSocket - Socket: ' + socket_host_port(this.socket) + ' threw an error: ' + util.inspect(err));
+        logger.info('FramingSocket - Socket: ' + this.name + ' threw an error: ' + util.inspect(err));
     };
 
     /**
@@ -372,12 +383,16 @@ module.exports = function(FramingBuffer,
             // Since we're sending a FIN and removed event listeners, any in flight
             // data events will be lost
             // TODO: figure out if this is a "good thing" :)
+            // Another option is to explicitly call this.fail_pending_deferreds()
+            // if that is the behavior we want.
+            this.pending_deferreds = {}; // clear it up
             this.socket.end();
             this.socket = null;
-            logger.info('FramingSocket - Socket: ' + socket_host_port(this.socket) + ' closed successfully');
+            logger.info('FramingSocket - Socket: ' + this.name + ' closed successfully');
+            this.name = 'disconnected';
         } else {
             if (debug) {
-                logger.info('FramingSocket - Socket: ' + socket_host_port(this.socket) + ' already closed');
+                logger.info('FramingSocket - Socket already closed');
             }
         }
     };
@@ -385,14 +400,19 @@ module.exports = function(FramingBuffer,
     /**
      * Wires up all the socket events.
      */
-    FramingSocket.prototype.register_socket_events = function() {
+    FramingSocket.prototype.register_socket_events = function(connecting_deferred) {
         var self = this;
 
         this.framing_buffer.on('frame', function on_frame(frame) {
             self.on_frame(frame);
         });
-        this.socket.on('error', function on_socket_error() {
-            self.on_socket_error();
+        this.socket.on('error', function on_socket_error(err) {
+            // if we have a connecting deferred that needs notification,
+            // reject it on connection errors
+            if (connecting_deferred) {
+                connecting_deferred.reject(new errors.HostUnavailableError('Unable to connect to: ' + self.name));
+            }
+            self.on_socket_error(err);
         });
         this.socket.on('close', function on_socket_close(had_error) {
             self.on_socket_close(had_error);
@@ -461,14 +481,6 @@ module.exports = function(FramingBuffer,
 
     function create_rpc_key(rpc_id) {
         return 'rpc_' + rpc_id;
-    }
-
-    function socket_host_port(socket) {
-        if (socket) {
-            return socket.remoteAddress + ':' + socket.remotePort;
-        } else {
-            return 'undefined';
-        }
     }
 
     return FramingSocket;
