@@ -21,7 +21,9 @@ common pause/resume events based on this upstream.
 ```js
 var FramingSocket = require('framing-socket');
 
+// there are actually the defaults
 var options = {
+    timeout_ms: 5000,                               // Client timeout to use in milliseconds
     frame_length_size: 4,                           // frame_length field size in bytes
     frame_length_reader: function(offset_buffer) {  // custom function to read the frame_length
       return offset_buffer.readInt32BE();           // note that it passes in an OffsetBuffer (see 'offset-buffer' repo)
@@ -47,7 +49,7 @@ socket.connect('localhost', 8888).then(function on_connect() {
 
 ## Usage
 
-### connect(host,port)
+### connect(host, port)
 Creates a new socket and returns a promise
 
 ```js
