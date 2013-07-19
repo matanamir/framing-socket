@@ -23,13 +23,29 @@ var FramingSocket = require('framing-socket');
 
 // these are actually the defaults
 var options = {
-    timeout_ms: 5000,                               // Client timeout to use in milliseconds
-    frame_length_size: 4,                           // frame_length field size in bytes
-    frame_length_reader: function(offset_buffer) {  // custom function to read the frame_length
-      return offset_buffer.readInt32BE();           // note that it passes in an OffsetBuffer (see 'offset-buffer' repo)
-    }
-    rpc_id_reader: function(offset_buffer) {        // custom function to read the rpc_id from the buffer
-      return offset_buffer.readInt32BE();           // The frame_length field is stripped from this OffsetBuffer already
+    // Client timeout to use in milliseconds
+    timeout_ms: 5000,
+    // frame_length field size in bytes
+    frame_length_size: 4,
+    // custom writer function for the frame_length field
+    frame_length_writer: function(offset_buffer, frame_length) {
+        offset_buffer.writeInt32BE(frame_length);
+    },
+    // custom function to read the frame_length
+    // note that it passes in an OffsetBuffer (see 'offset-buffer' repo)
+    frame_length_reader: function(offset_buffer) {
+        return offset_buffer.readInt32BE();
+    },
+    // rpc_id size in bytes
+    rpc_id_size: 4,
+    // custom writer function for the rpc_id
+    rpc_id_writer: function(offset_buffer, rpc_id) {
+        offset_buffer.writeInt32BE(rpc_id);
+    },
+    // custom reader function for the rpc_id
+    rpc_id_reader: function(offset_buffer) {
+        // The frame_length field is stripped from this OffsetBuffer already
+        return offset_buffer.readInt32BE();
     }
 };
 
