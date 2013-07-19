@@ -20,6 +20,24 @@ common pause/resume events based on this upstream.
 
 ```js
 var FramingSocket = require('framing-socket');
+var socket = new FramingSocket();
+var rpc_id = 123;                                   // Unique RPC ID to identify this request (unique to this connection)
+
+socket.connect('localhost', 8888).then(function on_connect() {
+    return socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
+}).then(function on_success(frame) {
+    // do something with the returned frame (minus the frame_length bytes)
+    // ....
+    return socket.close();
+}).then(function on_closed() {
+    // socket closed
+});
+```
+
+If you want control of how the fields are read and written:
+
+```js
+var FramingSocket = require('framing-socket');
 
 // these are actually the defaults
 var options = {
@@ -50,17 +68,8 @@ var options = {
 };
 
 var socket = new FramingSocket(options);
-var rpc_id = 123;                                   // Unique RPC ID to identify this request (unique to this connection)
 
-socket.connect('localhost', 8888).then(function on_connect() {
-    return socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-}).then(function on_success(frame) {
-    // do something with the returned frame (minus the frame_length bytes)
-    // ....
-    return socket.close();
-}).then(function on_closed() {
-    // socket closed
-});
+//...
 ```
 
 ## Usage
