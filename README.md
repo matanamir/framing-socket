@@ -21,7 +21,7 @@ common pause/resume events based on this upstream.
 ```js
 var FramingSocket = require('framing-socket');
 
-// there are actually the defaults
+// these are actually the defaults
 var options = {
     timeout_ms: 5000,                               // Client timeout to use in milliseconds
     frame_length_size: 4,                           // frame_length field size in bytes
