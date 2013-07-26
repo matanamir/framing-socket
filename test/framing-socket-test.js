@@ -151,7 +151,7 @@ test('fail_pending_rpcs()', function(t) {
 });
 
 test('resolve_deferred()', function(t) {
-    var response_frame = new Buffer([0x01, 0x02, 0x03]);
+    var response_frame = new OffsetBuffer(new Buffer([0x01, 0x02, 0x03]));
     after_connection(t, function(con) {
         con.write(1, new Buffer([0x01])).then(function(full_frame) {
             t.ok(true, 'Promise is resolved properly');
@@ -185,11 +185,8 @@ test('on_frame()', function(t) {
 
 test('on_socket_drain()', function(t) {
     after_connection(t, function(con) {
-        // set up for a drain event
-        con.socket.write = sinon.spy(function(data) {
-            return false;
-        });
-        con.num_false_writes = 5;
+        // set up for a pause event
+        con.socket.bufferSize = con.max_buffer_bytes * 2;
         t.plan(2); // plans two tests so it completes successfully automagically
         con.on('pause', function() {
             t.ok(true, 'Emits a \'pause\' event when pressure builds up');
@@ -260,6 +257,7 @@ function MockSocket(options) {
     this.setNoDelay = sinon.spy();
     this.setTimeout = sinon.spy();
     this.end = sinon.spy();
+    this.bufferSize = 0;
     this.write = sinon.spy(function(data) {
         return true;
     });

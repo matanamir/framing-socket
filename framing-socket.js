@@ -59,15 +59,10 @@ module.exports = function(FramingBuffer,
     var keep_alive_delay = 1000;
 
     /**
-     * The maximum number of false writes to accumulate before we start asking the user
-     * to throttle their writes.
-     */
-    var max_false_writes = 5;
-
-    /**
      * Ctor. The user should provide the following options (defaults shown):
      * {
      *      timeout_ms: 5000,
+     *      max_buffer_bytes: 1048576,
      *      frame_length_size: 4,
      *      frame_length_writer: function(offset_buffer, frame_length) {
      *          offset_buffer.writeInt32BE(frame_length);
@@ -116,16 +111,6 @@ module.exports = function(FramingBuffer,
         this.last_socket_error = null;
 
         /**
-         * A simple way of keeping node's internal buffering of write data
-         * under control.  If we exceed the max_false_writes number on
-         * consecutive writes (without a drain event in between), we will
-         * emit a 'pause' event so hopefully upstream something will throttle
-         * their writes.  A 'resume' event is sent upstream as soon as a
-         * 'drain' event is received from the socket.
-         */
-        this.num_false_writes = 0;
-
-        /**
          * Deferreds that are still pending a response are stored here.  This
          * allows us to cross reference a RPC result to a pending deferred
          * and resolve the promise.
@@ -144,7 +129,20 @@ module.exports = function(FramingBuffer,
          */
         this.options = options;
 
+        /**
+         * The client side connection timeout (ms).  If this is reached, the client
+         * will end the connection.
+         */
         this.timeout_ms = options.timeout_ms || 5000;
+
+        /**
+         * The maximum about of memory to use to buffer writes in the case that
+         * the socket write could not complete immediately (due to back pressure
+         * or similar).  After this amount of memory is used, the socket
+         * will emit a 'pause' event and will follow with a 'resume' event
+         * as soon as the underlying socket is drained.
+         */
+        this.max_buffer_bytes = options.max_buffer_bytes || 1048576;
 
         /**
          * The writer used to write the frame length into bytes.  It is passed an
@@ -189,7 +187,6 @@ module.exports = function(FramingBuffer,
         this.name = host + ':' + port;
         this.closed = false;
         this.last_socket_error = null;
-        this.num_false_writes = 0;
         // create a new FramingBuffer on each connect
         this.framing_buffer = new FramingBuffer(this.options);
         this.socket = net.connect({
@@ -224,9 +221,10 @@ module.exports = function(FramingBuffer,
     FramingSocket.prototype.write = function(rpc_id, data) {
         var self = this,
             deferred = when.defer(),
-            rpc_key = create_rpc_key(rpc_id);
+            rpc_key = create_rpc_key(rpc_id),
+            socket = this.socket;
 
-        if (!this.socket) {
+        if (!socket) {
             deferred.reject(new errors.NotConnectedError('FramingSocket.write - No socket available yet'));
             return deferred.promise;
         }
@@ -236,18 +234,21 @@ module.exports = function(FramingBuffer,
             return deferred.promise;
         }
 
-        // I assume this will emit an 'error' event if the socket is closed
-        if (!this.write_frame(this.socket, rpc_id, data)) {
-            this.num_false_writes++;
-            this.socket.once('drain', function() {
+        // For sockets, the write will always return true:
+        // (see: http://nodejs.org/docs/v0.8.22/api/net.html#net_socket_buffersize)
+        // So we have to check the socket's bufferSize to avoid eating up too much memory
+        // in the case of back pressure.
+        this.write_frame(socket, rpc_id, data);
+        // maybe we shouldn't do this check on every write_frame but only every X writes
+        if (socket.bufferSize > this.max_buffer_bytes) {
+            socket.once('drain', function on_drain() {
                 self.on_socket_drain();
             });
-            // If we've past the maximum number of consecutive false writes, let's ask the user
-            // to pause their writing.
-            if (this.num_false_writes > max_false_writes) {
-                this.emit('pause', this.socket.remoteAddress, this.socket.remotePort);
-            }
+            process.nextTick(function emit_pause() {
+                self.emit('pause', socket.remoteAddress, socket.remotePort);
+            });
         }
+
         // Keep track of the deferred by the rpc_key so we can find it again when we parse returned frames.
         // We could possible keep track of "expired" RPCs if we find deferreds get orphaned w/o a matching
         // return frame.
@@ -354,7 +355,7 @@ module.exports = function(FramingBuffer,
 
         if (debug) {
             diff_hrtime = process.hrtime(pending_deferred.timestamp);
-            logger.info('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.length +
+            logger.info('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.buf.length +
                 '.  Took: ' + ((diff_hrtime[0] * 1e9) + diff_hrtime[1]) + 'ns');
         }
 
@@ -441,7 +442,8 @@ module.exports = function(FramingBuffer,
         this.socket.removeAllListeners('drain'); // this is set to "once"
     };
 
-    /** Writes the data provided to the client to the socket in the proper
+    /**
+     * Writes the data provided to the client to the socket in the proper
      * frame format.
      *
      * At this point, i haven't concluded if multiple writes is better/worse
