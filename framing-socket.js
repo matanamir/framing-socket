@@ -453,26 +453,23 @@ module.exports = function(FramingBuffer,
      * Writes the data provided to the client to the socket in the proper
      * frame format.
      *
-     * At this point, i haven't concluded if multiple writes is better/worse
-     * than creating a new Buffer and copying all the data to it.  This depends
+     * At this point, it seems that multiple small rights is slower than
+     * creating a new Buffer and copying all the data to it.  This depends
      * on the underlying Node.js behavior around socket write buffering.  The
      * answer will be in libuv.
      *
      * This function returns a true/false value based on the need to deal with
      * back pressure (the same way socket.write()) works.
-     *
-     * TODO: come to a conclusion on this!
      */
     FramingSocket.prototype.write_frame = function(socket, rpc_id, data) {
         var frame_length_size = this.framing_buffer.frame_length_size,
             rpc_id_size = this.rpc_id_size,
-            frame_prefix = new OffsetBuffer(rpc_id_size + frame_length_size),
-            result;
+            frame = new OffsetBuffer(rpc_id_size + frame_length_size + data.length);
 
-        this.frame_length_writer(frame_prefix, data.length + rpc_id_size);
-        this.rpc_id_writer(frame_prefix, rpc_id);
-        result = socket.write(frame_prefix.buf);
-        return socket.write(data) && result;
+        this.frame_length_writer(frame, data.length + rpc_id_size);
+        this.rpc_id_writer(frame, rpc_id);
+        frame.copyFrom(data);
+        return socket.write(frame.buf);
     };
 
     // Default readers / writers
