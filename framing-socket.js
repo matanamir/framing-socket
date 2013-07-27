@@ -257,7 +257,7 @@ module.exports = function(FramingBuffer,
 
         // we've overflowed past max_buffer_bytes, so reject the write.
         if (socket.bufferSize > this.max_buffer_bytes) {
-            deferred.reject(new errors.BufferOverflowError('FramingSocket.write - max_buffer_size reached.  No new writes are being accepted at the moment.'));
+            deferred.reject(new errors.BufferOverflowError('FramingSocket.write - max_buffer_size reached.  Rejecting RPC id: ' + rpc_id));
             return deferred.promise;
         }
 
