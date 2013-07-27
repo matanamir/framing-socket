@@ -234,10 +234,9 @@ module.exports = function(FramingBuffer,
             return deferred.promise;
         }
 
-        // For sockets, the write will always return true:
-        // (see: http://nodejs.org/docs/v0.8.22/api/net.html#net_socket_buffersize)
+        // For sockets, the write might not always be immediate.
         // So we have to check the socket's bufferSize to avoid eating up too much memory
-        // in the case of back pressure.
+        // in the case that the write was added to socket's internal write queue.
         this.write_frame(socket, rpc_id, data);
         // maybe we shouldn't do this check on every write_frame but only every X writes
         if (socket.bufferSize > this.max_buffer_bytes) {
