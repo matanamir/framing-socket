@@ -62,6 +62,7 @@ module.exports = function(FramingBuffer,
      * Ctor. The user should provide the following options (defaults shown):
      * {
      *      timeout_ms: 5000,
+     *      warn_buffer_bytes: 524288,
      *      max_buffer_bytes: 1048576,
      *      frame_length_size: 4,
      *      frame_length_writer: function(offset_buffer, frame_length) {
@@ -103,6 +104,15 @@ module.exports = function(FramingBuffer,
         this.closed = false;
 
         /**
+         * Indicates this FramingSocket is waiting for a drain event
+         * from the underlying socket.  This is important so we
+         * continue to register for 'drain' events in the case
+         * where the user does not slow down and allow the 'drain'
+         * to happen before sending more write()s.
+         */
+        this.waiting_for_drain = false;
+
+        /**
          * Holds the last socket error for debugging.  It is set when
          * an error event is received.  This, together with the
          * had_error flag of 'close' can be used to report errors
@@ -135,12 +145,23 @@ module.exports = function(FramingBuffer,
          */
         this.timeout_ms = options.timeout_ms || 5000;
 
+
+        /**
+         * A watermark after which the FramingSocket will emit a 'pause' event and
+         * will follow with a 'resume' event as soon as the underlying socket is
+         * drained.  This is a safety measure for back pressure and gives the user
+         * time to slow down writes if needed.  This does not reject the writes
+         * though.  However, if max_buffer_bytes is reached, the FramingSocket
+         * will start to reject writes.
+         */
+        this.warn_buffer_bytes = options.warn_buffer_bytes || 524288;
+
         /**
          * The maximum about of memory to use to buffer writes in the case that
          * the socket write could not complete immediately (due to back pressure
          * or similar).  After this amount of memory is used, the socket
-         * will emit a 'pause' event and will follow with a 'resume' event
-         * as soon as the underlying socket is drained.
+         * reject addition writes by invoking the errback of the returned
+         * promise.
          */
         this.max_buffer_bytes = options.max_buffer_bytes || 1048576;
 
@@ -234,18 +255,29 @@ module.exports = function(FramingBuffer,
             return deferred.promise;
         }
 
+        // we've overflowed past max_buffer_bytes, so reject the write.
+        if (socket.bufferSize > this.max_buffer_bytes) {
+            deferred.reject(new errors.BufferOverflowError('FramingSocket.write - max_buffer_size reached.  No new writes are being accepted at the moment.'));
+            return deferred.promise;
+        }
+
         // For sockets, the write might not always be immediate.
         // So we have to check the socket's bufferSize to avoid eating up too much memory
         // in the case that the write was added to socket's internal write queue.
         this.write_frame(socket, rpc_id, data);
-        // maybe we shouldn't do this check on every write_frame but only every X writes
-        if (socket.bufferSize > this.max_buffer_bytes) {
-            socket.once('drain', function on_drain() {
-                self.on_socket_drain();
-            });
-            process.nextTick(function emit_pause() {
-                self.emit('pause', socket.remoteAddress, socket.remotePort);
-            });
+
+        if (socket.bufferSize > this.warn_buffer_bytes) {
+            // prevent multiple registers of the 'drain' event in the case that the user
+            // does not slow down.
+            if (!this.waiting_for_drain) {
+                this.waiting_for_drain = true;
+                socket.once('drain', function on_drain() {
+                    self.on_socket_drain();
+                });
+                process.nextTick(function emit_pause() {
+                    self.emit('pause', socket.remoteAddress, socket.remotePort);
+                });
+            }
         }
 
         // Keep track of the deferred by the rpc_key so we can find it again when we parse returned frames.
@@ -312,7 +344,7 @@ module.exports = function(FramingBuffer,
     };
 
     FramingSocket.prototype.on_socket_drain = function() {
-        this.num_false_writes = 0;
+        this.waiting_for_drain = false;
         this.emit('resume', this.socket.remoteAddress, this.socket.remotePort);
     };
 

@@ -108,7 +108,9 @@ test('write()', function(t) {
         t.test('Write succeeds when there are no duplicates', function(t) {
             var promise;
             after_connection(t, function(con) {
-                promise = con.write(1, buf);
+                promise = con.write(1, buf).otherwise(function() {
+                    errback(t);
+                });
                 t.ok((promise !== null), 'Promise returned successfully and not rejected');
                 t.ok((Object.keys(con.pending_deferreds).length > 0), 'Deferred is saved as pending.');
                 t.end();
@@ -123,6 +125,17 @@ test('write()', function(t) {
                 promise = con.write(1, buf).otherwise(function(err) {
                     t.ok(true, 'Write rejected since the same RPC is pending');
                     t.ok((err instanceof errors.DuplicateDataError), 'Error is of type DuplicateDataError');
+                    t.end();
+                });
+            });
+        });
+        t.test('Write fails if max_buffer_size is passed', function(t) {
+            var promise;
+            after_connection(t, function(con) {
+                con.socket.bufferSize = con.max_buffer_bytes + 1;
+                promise = con.write(1, buf).otherwise(function(err) {
+                    t.ok(true, 'Write rejected since max_buffer_size is passed.');
+                    t.ok((err instanceof errors.BufferOverflowError), 'Error is of type BufferOverflowError');
                     t.end();
                 });
             });
@@ -186,7 +199,7 @@ test('on_frame()', function(t) {
 test('on_socket_drain()', function(t) {
     after_connection(t, function(con) {
         // set up for a pause event
-        con.socket.bufferSize = con.max_buffer_bytes * 2;
+        con.socket.bufferSize = con.warn_buffer_bytes + 1;
         t.plan(2); // plans two tests so it completes successfully automagically
         con.on('pause', function() {
             t.ok(true, 'Emits a \'pause\' event when pressure builds up');
