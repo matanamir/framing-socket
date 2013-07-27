@@ -79,6 +79,16 @@ module.exports = function (util) {
     };
     util.inherits(errors.DuplicateDataError, errors.RecoverableError);
 
+    errors.BufferOverflowError = function(message) {
+        Error.call(this);
+        this.name = 'BufferOverflowError';
+        this.message = message;
+        if (Error.captureStackTrace) {
+            Error.captureStackTrace(this, errors.BufferOverflowError);
+        }
+    };
+    util.inherits(errors.BufferOverflowError, errors.RecoverableError);
+
     return errors;
 };
 
