@@ -267,7 +267,9 @@ module.exports = function(FramingBuffer,
         this.socket.setKeepAlive(true, keep_alive_delay);
         this.socket.setNoDelay(true);
         this.socket.setTimeout(this.timeout_ms);
-        logger.info('FramingSocket.connect - Successfully connected to: ' + this.name);
+        if (debug) {
+            logger.log('FramingSocket.connect - Successfully connected to: ' + this.name);
+        }
     };
 
     /**
@@ -276,7 +278,9 @@ module.exports = function(FramingBuffer,
      * something else.
      */
     FramingSocket.prototype.on_socket_timeout = function() {
-        logger.info('FramingSocket.on_socket_timeout - ' + this.name + ' timed out (' + this.timeout_ms + 'ms).  ');
+        if (debug) {
+            logger.log('FramingSocket.on_socket_timeout - ' + this.name + ' timed out (' + this.timeout_ms + 'ms).  ');
+        }
         this.emit('timeout', this.socket.remoteAddress, this.socket.remotePort);
     };
 
@@ -285,7 +289,9 @@ module.exports = function(FramingBuffer,
      */
     FramingSocket.prototype.on_socket_error = function(err) {
         this.last_socket_error = err;
-        logger.info('FramingSocket - Socket: ' + this.name + ' threw an error: ' + util.inspect(err));
+        if (debug) {
+            logger.log('FramingSocket - Socket: ' + this.name + ' threw an error: ' + util.inspect(err));
+        }
     };
 
     /**
@@ -354,7 +360,7 @@ module.exports = function(FramingBuffer,
 
         if (debug) {
             diff_hrtime = process.hrtime(pending_deferred.timestamp);
-            logger.info('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.buf.length +
+            logger.log('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.buf.length +
                 '.  Took: ' + ((diff_hrtime[0] * 1e9) + diff_hrtime[1]) + 'ns');
         }
 
@@ -388,11 +394,13 @@ module.exports = function(FramingBuffer,
             this.pending_deferreds = {}; // clear it up
             this.socket.end();
             this.socket = null;
-            logger.info('FramingSocket - Socket: ' + this.name + ' closed successfully');
+            if (debug) {
+                logger.log('FramingSocket - Socket: ' + this.name + ' closed successfully');
+            }
             this.name = 'disconnected';
         } else {
             if (debug) {
-                logger.info('FramingSocket - Socket already closed');
+                logger.log('FramingSocket - Socket already closed');
             }
         }
     };
