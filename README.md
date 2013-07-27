@@ -11,8 +11,9 @@ size of the frame, and each frame response contains an RPC ID to associate it wi
 The user can define their own frame_length reader function and rpc_id reader function to find and parse those
 values from the frame.
 
-It also includes a simplistic backpressure mechanism based on the socket.bufferSize.  A max buffer size can
-be provided to tell the FramingSocket when to emit pause events.
+It also includes a simplistic backpressure mechanism based on the socket.bufferSize in two stages.  warn_buffer_bytes
+  is the first watermark to start telling a user to back off via 'pause' and 'resume' events.  max_buffer_bytes is
+  the second watermark where writes will be rejected completely.
 
 **Note**: *Still experimental.*
 
@@ -43,8 +44,11 @@ var FramingSocket = require('framing-socket');
 var options = {
     // Client timeout to use in milliseconds
     timeout_ms: 5000,
+    // memory watermark before emitting 'pause' and 'resume'
+    // events to throttle writes (hopefully)
+    warn_buffer_bytes: 524288,
     // Maximum memory to buffer for a socket before
-    // emitting 'pause' events.
+    // rejecting writes
     max_buffer_bytes: 1048576,
     // frame_length field size in bytes
     frame_length_size: 4,
