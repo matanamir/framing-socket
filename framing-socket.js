@@ -121,11 +121,11 @@ module.exports = function(FramingBuffer,
         this.last_socket_error = null;
 
         /**
-         * Deferreds that are still pending a response are stored here.  This
-         * allows us to cross reference a RPC result to a pending deferred
-         * and resolve the promise.
+         * Callbacks that are still pending a response are stored here.  This
+         * allows us to cross reference a RPC result to a pending callback and
+         * call them.
          */
-        this.pending_deferreds = {};
+        this.pending_callbacks = {};
 
         /**
          * Internal framing buffer that deals with framing the incoming
@@ -198,12 +198,12 @@ module.exports = function(FramingBuffer,
      * Returns a promise that is resolved when the connection state is
      * finalized (failure or success).
      */
-    FramingSocket.prototype.connect = function(host, port) {
-        var self = this,
-            deferred = when.defer();
+    FramingSocket.prototype.connect = function(host, port, callback) {
+        var self = this;
 
         if (this.socket) {
-            deferred.reject(new errors.AlreadyConnectedError('Already connected to: ' + this.name));
+            callback(new errors.AlreadyConnectedError('Already connected to: ' + this.name));
+            return;
         }
         this.name = host + ':' + port;
         this.closed = false;
@@ -215,10 +215,9 @@ module.exports = function(FramingBuffer,
             port: port
         }, function on_connect() {
             self.on_socket_connect();
-            deferred.resolve();
+            callback();
         });
-        this.register_socket_events(deferred);
-        return deferred.promise;
+        this.register_socket_events(callback);
     };
 
     /**
@@ -227,11 +226,7 @@ module.exports = function(FramingBuffer,
      * since the clean up steps are synchronous.
      */
     FramingSocket.prototype.close = function() {
-        var deferred = when.defer();
-
         this.clean_up_socket();
-        deferred.resolve();
-        return deferred.promise;
     };
 
     /**
@@ -239,26 +234,25 @@ module.exports = function(FramingBuffer,
      * the return data is available for this (we're assuming a request/response protocol).
      * This involved framing the results properly and matching the proper frame by the RPC ID.
      */
-    FramingSocket.prototype.write = function(rpc_id, data) {
+    FramingSocket.prototype.write = function(rpc_id, data, callback) {
         var self = this,
-            deferred = when.defer(),
             rpc_key = create_rpc_key(rpc_id),
             socket = this.socket;
 
         if (!socket) {
-            deferred.reject(new errors.NotConnectedError('FramingSocket.write - No socket available yet'));
-            return deferred.promise;
+            callback(new errors.NotConnectedError('FramingSocket.write - No socket available yet'));
+            return;
         }
 
-        if (this.pending_deferreds[rpc_key]) {
-            deferred.reject(new errors.DuplicateDataError('FramingSocket.write - Duplicate RPC: ' + rpc_key + ' written while the previous is still pending.'));
-            return deferred.promise;
+        if (this.pending_callbacks[rpc_key]) {
+            callback(new errors.DuplicateDataError('FramingSocket.write - Duplicate RPC: ' + rpc_key + ' written while the previous is still pending.'));
+            return;
         }
 
         // we've overflowed past max_buffer_bytes, so reject the write.
         if (socket.bufferSize > this.max_buffer_bytes) {
-            deferred.reject(new errors.BufferOverflowError('FramingSocket.write - max_buffer_size reached.  Rejecting RPC id: ' + rpc_id));
-            return deferred.promise;
+            callback(new errors.BufferOverflowError('FramingSocket.write - max_buffer_size reached.  Rejecting RPC id: ' + rpc_id));
+            return;
         }
 
         // For sockets, the write might not always be immediate.
@@ -280,18 +274,17 @@ module.exports = function(FramingBuffer,
             }
         }
 
-        // Keep track of the deferred by the rpc_key so we can find it again when we parse returned frames.
-        // We could possible keep track of "expired" RPCs if we find deferreds get orphaned w/o a matching
+        // Keep track of the callback by the rpc_key so we can find it again when we parse returned frames.
+        // We could possible keep track of "expired" RPCs if we find callbacks get orphaned w/o a matching
         // return frame.
-        this.pending_deferreds[rpc_key] = {
+        this.pending_callbacks[rpc_key] = {
             timestamp: process.hrtime(),
-            deferred: deferred
+            callback: callback
         };
-        return deferred.promise;
     };
 
     FramingSocket.prototype.on_socket_connect = function() {
-        // first since we connected, set the error event handler to exclude the connecting deferred
+        // first since we connected, set the error event handler to exclude the connecting callback
         this.socket.removeAllListeners('error');
         this.socket.on('error', function on_socket_error(err) {
             self.on_socket_error(err);
@@ -358,47 +351,46 @@ module.exports = function(FramingBuffer,
             err = new errors.NonRecoverableError('FramingSocket.fail_pending_rpcs called. Possibly due to some' +
             'nasty issue');
 
-        Object.keys(this.pending_deferreds).forEach(function(rpc) {
-            self.pending_deferreds[rpc].deferred.reject(err);
+        Object.keys(this.pending_callbacks).forEach(function(rpc) {
+            self.pending_callbacks[rpc].callback(err);
         });
-        this.pending_deferreds = {}; // clear it up
+        this.pending_callbacks = {}; // clear it up
     };
 
     /**
      * When a full frame comes in via the FrameBuffer, extract the RPC ID
-     * and cross reference it with our pending deferreds so the proper
+     * and cross reference it with our pending callbacks so the proper
      * promise can be resolved.
      */
     FramingSocket.prototype.on_frame = function(full_frame) {
         var rpc_id = this.rpc_id_reader(full_frame);
-        this.resolve_deferred(rpc_id, full_frame);
+        this.resolve_callback(rpc_id, full_frame);
     };
 
     /**
-     * Finds the pending deferred for the provided rpc_id and resolves it
+     * Finds the pending callback for the provided rpc_id and resolves it
      * with the full frame data we have collected.
      */
-    FramingSocket.prototype.resolve_deferred = function(rpc_id, frame) {
+    FramingSocket.prototype.resolve_callback = function(rpc_id, frame) {
         var rpc_key = create_rpc_key(rpc_id),
-            pending_deferred = this.pending_deferreds[rpc_key],
+            pending_callback = this.pending_callbacks[rpc_key],
             diff_hrtime;
 
-        if (!pending_deferred) {
+        if (!pending_callback) {
             // Hmm, not much we can really do here other than fail.
-            // Note that this type of error will cause the connection to be closed and restarted.
-            // All other pending rpcs will fail.
+            // TODO: some socket state cleanup might be in order here
             throw new errors.NonRecoverableError('Couldn\'t find rpc_id: ' + rpc_key + ' in pending queue.');
         }
 
         if (debug) {
-            diff_hrtime = process.hrtime(pending_deferred.timestamp);
+            diff_hrtime = process.hrtime(pending_callback.timestamp);
             logger.log('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.buf.length +
                 '.  Took: ' + ((diff_hrtime[0] * 1e9) + diff_hrtime[1]) + 'ns');
         }
 
-        // remove this pending deferred from the list
-        delete this.pending_deferreds[rpc_key];
-        pending_deferred.deferred.resolve(frame);
+        // remove this pending callback from the list
+        delete this.pending_callbacks[rpc_key];
+        pending_callback.callback(null, frame);
     };
 
     /**
@@ -421,9 +413,9 @@ module.exports = function(FramingBuffer,
             // Since we're sending a FIN and removed event listeners, any in flight
             // data events will be lost
             // TODO: figure out if this is a "good thing" :)
-            // Another option is to explicitly call this.fail_pending_deferreds()
+            // Another option is to explicitly call this.fail_pending_rpcs()
             // if that is the behavior we want.
-            this.pending_deferreds = {}; // clear it up
+            this.pending_callbacks = {}; // clear it up
             this.socket.end();
             this.socket = null;
             if (debug) {
@@ -440,17 +432,17 @@ module.exports = function(FramingBuffer,
     /**
      * Wires up all the socket events.
      */
-    FramingSocket.prototype.register_socket_events = function(connecting_deferred) {
+    FramingSocket.prototype.register_socket_events = function(connecting_callback) {
         var self = this;
 
         this.framing_buffer.on('frame', function on_frame(frame) {
             self.on_frame(frame);
         });
         this.socket.on('error', function on_socket_error(err) {
-            // if we have a connecting deferred that needs notification,
+            // if we have a connecting callback that needs notification,
             // reject it on connection errors
-            if (connecting_deferred) {
-                connecting_deferred.reject(new errors.HostUnavailableError('Unable to connect to: ' + self.name));
+            if (connecting_callback) {
+                connecting_callback(new errors.HostUnavailableError('Unable to connect to: ' + self.name));
             }
             self.on_socket_error(err);
         });
