@@ -237,6 +237,10 @@ module.exports = function(FramingBuffer,
             rpc_key = create_rpc_key(rpc_id),
             socket = this.socket;
 
+        if (!callback) {
+            throw new TypeError('FramingSocket.write - No callback found');
+        }
+
         if (!socket) {
             callback(new errors.NotConnectedError('FramingSocket.write - No socket available yet'));
             return;
