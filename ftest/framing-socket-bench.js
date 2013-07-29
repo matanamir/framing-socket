@@ -15,7 +15,7 @@
  *                        will try to complete. [20000]
  */
 
-var FramingSocket = require_FramingSocket(true),
+var FramingSocket = require_FramingSocket(false),
     metrics = require('metrics'),
     host = process.argv[2] || 'localhost',
     port = parseInt(process.argv[3], 10) || 8118,
