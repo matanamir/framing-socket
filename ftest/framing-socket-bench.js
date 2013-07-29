@@ -14,7 +14,8 @@
  *     <num_rpcs>       = Number of total RPCs each client
  *                        will try to complete. [20000]
  */
-var FramingSocket = require('../index.js'),
+
+var FramingSocket = require_FramingSocket(false),
     metrics = require('metrics'),
     when = require('when'),
     host = process.argv[2] || 'localhost',
@@ -23,6 +24,7 @@ var FramingSocket = require('../index.js'),
     num_rpcs = parseInt(process.argv[5], 10) || 20000,
     tests = [],
     rpc_id = 0; // incrementing rpc id to use for the frame
+
 
 /**
  * Test types
@@ -211,6 +213,29 @@ Test.prototype.print_stats = function () {
     );
 };
 
+function require_FramingSocket(loopback_socket) {
+    var FramingBuffer = require('framing-buffer'),
+        OffsetBuffer = require('offset-buffer'),
+        util = require('util'),
+        events = require('events'),
+        debug = false,
+        net = loopback_socket ? require('./loopback-net.js') : require('net'),
+        when = require('when'),
+        errors = require('../errors.js')(util);
+
+    return require('../framing-socket.js')(
+        FramingBuffer,
+        OffsetBuffer,
+        debug,
+        net,
+        events,
+        util,
+        when,
+        errors,
+        console
+    );
+}
+
 /**
  * Adds padding to the left of a passed in string if required
  */
@@ -249,6 +274,8 @@ function next() {
         process.exit(0);
     }
 }
+
+
 
 // -------------------------------------------------------------------------------
 // Tests
