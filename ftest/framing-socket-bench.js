@@ -132,8 +132,13 @@ Test.prototype.create_socket = function(socket_id, callback) {
         callback();
     }
 
+    function on_socket_disconnected(host, port, err) {
+        console.log(err);
+    }
+
     // keep track of when the socket was created
     socket._create_time = Date.now();
+    socket.on('disconnected', on_socket_disconnected);
     this.sockets[socket_id] = socket;
     socket.connect(host, port, on_socket_connect);
 };
