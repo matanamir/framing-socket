@@ -17,7 +17,6 @@
 
 var FramingSocket = require_FramingSocket(false),
     metrics = require('metrics'),
-    when = require('when'),
     host = process.argv[2] || 'localhost',
     port = parseInt(process.argv[3], 10) || 8118,
     num_sockets = parseInt(process.argv[4], 10) || 5,
@@ -62,10 +61,10 @@ function Test(payload, concurrency) {
     this.sockets = [];
 
     /**
-     * The deferred set on the start of tests.  This will be resolved
+     * The callback set on the start of tests.  This will be called
      * when the tests are complete.
      */
-    this.start_deferred = null;
+    this.start_callback = null;
 
     /**
      * The timestamp of when the tests started.  We use this to keep track
@@ -103,36 +102,47 @@ function Test(payload, concurrency) {
  * Entry point to start tests.  It creates num_socket sockets.  When all the
  * sockets are connected successfully, it kicks off the next stage.
  */
-Test.prototype.run = function() {
+Test.prototype.run = function(callback) {
     var self = this,
-        promises = [],
-        i;
+        i,
+        num_created = 0;
+
+    function on_create_socket() {
+        num_created++;
+        if (num_created >= self.sockets.length) {
+            self.on_connected();
+        }
+    }
 
     // TODO: we're not bothering to check here if tests are already started...
-    this.start_deferred = when.defer();
+    this.start_callback = callback;
     for (i = 0; i < num_sockets; i++) {
-        promises.push(this.create_socket(i));
+        this.create_socket(i, on_create_socket);
     }
-    when.all(promises).then(function on_all_connected() {
-        self.on_connected();
-    });
-    return this.start_deferred.promise;
 };
 
 /**
  * Creates a new FramingSocket and connects it to the provided server host/port.
  * It also keeps track of connection timings.
  */
-Test.prototype.create_socket = function(socket_id) {
+Test.prototype.create_socket = function(socket_id, callback) {
     var self = this,
         socket = new FramingSocket();
 
+    function on_socket_connect() {
+        self.connect_latency.update(Date.now() - socket._create_time);
+        callback();
+    }
+
+    function on_socket_disconnected(host, port, err) {
+        console.log(err);
+    }
+
     // keep track of when the socket was created
     socket._create_time = Date.now();
+    socket.on('disconnected', on_socket_disconnected);
     this.sockets[socket_id] = socket;
-    return socket.connect(host, port).then(function on_connect() {
-        self.connect_latency.update(Date.now() - socket._create_time);
-    });
+    socket.connect(host, port, on_socket_connect);
 };
 
 /**
@@ -177,28 +187,28 @@ Test.prototype.send_rpc = function() {
         start = Date.now(),
         socket = this.sockets[this.rpcs_sent % this.sockets.length];
 
-    socket.write(rpc_id++, this.payload).then(function on_socket_response(frame) {
+    function on_socket_response(err, frame) {
+        if (err) {
+            self.rpcs_failed++;
+            return;
+        }
+
         self.rpc_latency.update(Date.now() - start);
         self.rpcs_received++;
         self.fill_pipeline();
-    }, function on_socket_error(err) {
-        self.rpcs_failed++;
-    });
+    }
+
+    socket.write(rpc_id++, this.payload, on_socket_response);
 };
 
 /**
  * Shuts down all open sockets and resolves the
  */
 Test.prototype.stop_sockets = function() {
-    var self = this,
-        promises = [];
-
     this.sockets.forEach(function stop_sockets_forEach(socket) {
-        promises.push(socket.close());
+        socket.close();
     });
-    when.all(promises).then(function on_all_closed() {
-        self.start_deferred.resolve();
-    });
+    this.start_callback();
 };
 
 Test.prototype.print_stats = function () {
@@ -265,10 +275,13 @@ function format_histogram_data(histogram) {
 
 function next() {
     var test = tests.shift();
+
+    function on_test_done() {
+        next();
+    }
+
     if (test) {
-        test.run().then(function on_test_done() {
-            next();
-        });
+        test.run(on_test_done);
     } else {
         console.log("End of tests.");
         process.exit(0);

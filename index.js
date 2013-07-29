@@ -4,7 +4,6 @@ var FramingBuffer = require('framing-buffer'),
     net = require('net'),
     events = require('events'),
     util = require('util'),
-    when = require('when'),
     errors = require('./errors.js')(util);
 
 module.exports = require('./framing-socket.js')(
@@ -14,7 +13,6 @@ module.exports = require('./framing-socket.js')(
     net,
     events,
     util,
-    when,
     errors,
     console
 );
