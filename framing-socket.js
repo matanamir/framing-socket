@@ -284,6 +284,8 @@ module.exports = function(FramingBuffer,
     };
 
     FramingSocket.prototype.on_socket_connect = function() {
+        var self = this;
+
         // first since we connected, set the error event handler to exclude the connecting callback
         this.socket.removeAllListeners('error');
         this.socket.on('error', function on_socket_error(err) {
