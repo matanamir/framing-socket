@@ -13,43 +13,44 @@ var test = require('tap').test,
 test('Client connect -> server down', function(t) {
     var client = create_client();
 
-    client.connect(host, port).otherwise(function() {
-        t.ok(true, 'Client called errback on failure to connect');
-        t.end();
+    client.connect(host, port, function on_connect(err) {
+        if (err) {
+            t.ok(true, 'Client called errback on failure to connect');
+            t.end();
+        }
     });
 });
 
 test('Client connect -> client disconnect x 10', function(t) {
     var client = create_client(),
-        server = create_server(),
-        deferred = when.defer();
+        server = create_server();
 
-    server.listen(port).then(function() {
+    function on_server_close() {
+        t.end();
+    }
+
+    function on_done() {
+        server.close(on_server_close);
+    }
+
+    function on_server_listen() {
         (function next(iteration) {
             if (iteration >= 10) {
                 t.ok(true, 'Client can perform multiple connect/disconnect cycles');
                 t.ok((client.socket === null), 'Client socket is nulled');
-                t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+                t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
                 t.end();
-                deferred.resolve();
+                on_done();
                 return;
             }
-            client.connect(host, port).then(function() {
-                return client.close();
-            }).then(function() {
+            client.connect(host, port, function on_client_close() {
+                client.close();
                 next(iteration + 1);
-            }).otherwise(function() {
-                t.ok(false, 'Client fails to support multiple connect/disconnect cycles');
-                t.end();
             });
         })(0);
+    }
 
-        deferred.promise.then(function() {
-            return server.close();
-        }).then(function () {
-            t.end();
-        });
-    });
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> client disconnect', function(t) {
@@ -57,23 +58,31 @@ test('Client connect -> client write full frame -> client disconnect', function(
         client = create_client(),
         rpc_id = 1;
 
-    server.listen(port).then(function() {
-        return client.connect(host, port);
-    }).then(function() {
-        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-        // let's not wait for the server to return a result...
-        return client.close();
-    }).then(function() {
-        return server.close();
-    }).then(function() {
+    function on_server_close() {
         t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
-        t.end();
-        return server.close();
-    });
+    }
+
+    function on_client_write(err, frame) {
+        // no op
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+        client.close();
+        server.close(on_server_close);
+    }
+
+    function on_server_listen() {
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> server disconnect', function(t) {
@@ -83,22 +92,33 @@ test('Client connect -> client write full frame -> server disconnect', function(
 
     function on_disconnected() {
         t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
     }
 
-    server.listen(port).then(function() {
+    function on_server_close() {
+        // no op
+    }
+
+    function on_client_write(err, frame) {
+        // no op
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+        server.close(on_server_close);
+    }
+
+    function on_server_listen() {
         client.on('disconnected', on_disconnected);
-        return client.connect(host, port);
-    }).then(function() {
-        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-        // let's not wait for the server to return a result...
-        return server.close();
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
-        t.end();
-        return server.close();
-    });
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> server stuck -> client timeout', function(t) {
@@ -110,30 +130,35 @@ test('Client connect -> client write full frame -> server stuck -> client timeou
         }),
         rpc_id = 1;
 
+    function on_server_close() {
+    }
+
     function on_timeout() {
-        client.close().then(function() {
-            return server.close();
-        }).then(function() {
-            t.end();
-        });
+        client.close();
+        server.close(on_server_close);
         t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
     }
 
-    client.on('timeout', on_timeout);
-
-    server.listen(port).then(function() {
-        return client.connect(host, port);
-    }).then(function() {
-        return client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-    }).then(function() {
+    function on_client_write(err, frame) {
         t.ok(false, 'Result should not have made it back to client before timeout');
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
-        t.end();
-        return server.close();
-    });
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+    }
+
+    function on_server_listen() {
+        client.on('timeout', on_timeout);
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> server response partial frame -> server stuck -> client timeout', function(t) {
@@ -145,30 +170,35 @@ test('Client connect -> client write full frame -> server response partial frame
         }),
         rpc_id = 1;
 
+    function on_server_close() {
+    }
+
     function on_timeout() {
-        client.close().then(function() {
-            return server.close();
-        }).then(function() {
-                t.end();
-            });
+        client.close();
+        server.close(on_server_close);
         t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
     }
 
-    client.on('timeout', on_timeout);
-
-    server.listen(port).then(function() {
-        return client.connect(host, port);
-    }).then(function() {
-        return client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-    }).then(function() {
+    function on_client_write(err, frame) {
         t.ok(false, 'Result should not have made it back to client before timeout');
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
-        t.end();
-        return server.close();
-    });
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+    }
+
+    function on_server_listen() {
+        client.on('timeout', on_timeout);
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> server response partial frame -> server disconnect', function(t) {
@@ -185,23 +215,28 @@ test('Client connect -> client write full frame -> server response partial frame
 
     function on_disconnected() {
         t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
     }
 
-    client.on('disconnected', on_disconnected);
-
-    server.listen(port).then(function() {
-        return client.connect(host, port);
-    }).then(function() {
-        return client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-    }).then(function() {
+    function on_client_write(err, frame) {
         t.ok(false, 'Result should not have made it back to client before timeout');
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
-        t.end();
-        return server.close();
-    });
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+    }
+
+    function on_server_listen() {
+        client.on('disconnected', on_disconnected);
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> client write full frame -> server response partial frame -> server timeout', function(t) {
@@ -212,26 +247,34 @@ test('Client connect -> client write full frame -> server response partial frame
         client = create_client(),
         rpc_id = 1;
 
-    function on_disconnected() {
-        t.ok((client.socket === null), 'Client socket is nulled');
-        t.equal(Object.keys(client.pending_deferreds).length, 0, 'No pending deferreds for this client');
-        t.end();
-        return server.close();
+    function on_server_close() {
     }
 
-    client.on('disconnected', on_disconnected);
-
-    server.listen(port).then(function() {
-        return client.connect(host, port);
-    }).then(function() {
-        return client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-    }).then(function() {
-        t.ok(false, 'Result should not have made it back to client before timeout');
-    }).otherwise(function(err) {
-        t.ok(false, 'Error caught: ' + util.inspect(err));
+    function on_disconnected() {
+        t.ok((client.socket === null), 'Client socket is nulled');
+        t.equal(Object.keys(client.pending_callbacks).length, 0, 'No pending callbacks for this client');
         t.end();
-        return server.close();
-    });
+        server.close(on_server_close);
+    }
+
+    function on_client_write(err, frame) {
+        t.ok(false, 'Result should not have made it back to client before timeout');
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+        client.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_client_write);
+    }
+
+    function on_server_listen() {
+        client.on('disconnected', on_disconnected);
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
 
 test('Client connect -> (client write full frame -> server response full frame) x 10 -> client disconnect', function(t) {
@@ -241,33 +284,49 @@ test('Client connect -> (client write full frame -> server response full frame) 
         rpc_id = 1,
         buf = new Buffer([0x01, 0x02, 0x03]);
 
-    server.listen(port).then(function() {
-        client.connect(host, port).then(function() {
-            (function next(iteration) {
-                if (iteration >= 10) {
-                    t.ok(true, 'Client can perform multiple write/receive cycles');
-                    t.end();
-                    deferred.resolve();
+    function on_server_close() {
+
+    }
+
+    function on_done() {
+        server.close(on_server_close);
+    }
+
+    function on_client_connect(err) {
+        if (err) {
+            errback(t, err, server);
+            return;
+        }
+
+        (function next(iteration) {
+            if (iteration >= 10) {
+                t.ok(true, 'Client can perform multiple write/receive cycles');
+                t.end();
+                on_done();
+                return;
+            }
+            client.write(rpc_id, buf, function on_client_write(err, frame) {
+                if (err) {
+                    errback(t, err, server);
                     return;
                 }
-                client.write(rpc_id, buf).then(function() {
-                    next(iteration + 1);
-                }).otherwise(function() {
-                    t.ok(false, 'Client fails to support multiple write/receive cycles');
-                    t.end();
-                });
-            })(0);
-        });
+                next(iteration + 1);
+            });
+        })(0);
+    }
 
-        deferred.promise.then(function() {
-            return client.close();
-        }).then(function() {
-            return server.close();
-        }).then(function () {
-            t.end();
-        });
-    });
+    function on_server_listen() {
+        client.connect(host, port, on_client_connect);
+    }
+
+    server.listen(port, on_server_listen);
 });
+
+function errback(t, err, server) {
+    t.ok(false, 'Error caught: ' + util.inspect(err));
+    t.end();
+    server.close();
+}
 
 function create_client(options) {
     return new FramingSocket(options);
