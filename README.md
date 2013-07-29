@@ -2,7 +2,7 @@
 
 [![Build Status](https://travis-ci.org/matanamir/framing-socket.png)](https://travis-ci.org/matanamir/framing-socket)
 
-FramingSocket adds variable size framing and simple promise-based notifications to normal sockets.
+FramingSocket adds variable size framing to normal sockets.
 
 Note that the FramingSocket assumes a request/response protocol of some form where the first frame bytes are the
 size of the frame, and each frame response contains an RPC ID to associate it with the sent request.  It uses the
@@ -11,7 +11,7 @@ size of the frame, and each frame response contains an RPC ID to associate it wi
 The user can define their own frame_length reader function and rpc_id reader function to find and parse those
 values from the frame.
 
-It also includes a simplistic backpressure mechanism based on the socket.bufferSize in two stages.  warn_buffer_bytes
+It also includes a simplistic back pressure mechanism based on the socket.bufferSize in two stages.  warn_buffer_bytes
   is the first watermark to start telling a user to back off via 'pause' and 'resume' events.  max_buffer_bytes is
   the second watermark where writes will be rejected completely.
 
@@ -24,15 +24,22 @@ var FramingSocket = require('framing-socket');
 var socket = new FramingSocket();
 var rpc_id = 123;                                   // Unique RPC ID to identify this request (unique to this connection)
 
-socket.connect('localhost', 8888).then(function on_connect() {
-    return socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03]));
-}).then(function on_success(frame) {
+function on_frame(err, data) {
     // do something with the returned frame (minus the frame_length bytes)
     // ....
-    return socket.close();
-}).then(function on_closed() {
-    // socket closed
-});
+    // got what we wanted so let's close the connection
+    socket.close();
+}
+
+function on_connect(err) {
+    if (err) {
+        // oops - failed to connect...
+        return;
+    }
+    socket.write(rpc_id, new Buffer([0x01, 0x02, 0x03]), on_frame);
+}
+
+socket.connect('localhost', 8888, on_connect);
 ```
 
 If you want control of how the fields are read and written:
@@ -81,48 +88,50 @@ var socket = new FramingSocket(options);
 
 ## Usage
 
-### connect(host, port)
-Creates a new socket and returns a promise
+### connect(host, port, callback)
+Creates a new socket calls the callback when the connection is complete.
 
 ```js
-framing_socket.connect(host, port).then(function on_connect() {
-    // socket is now connected successfully...
-}).otherwise(function on_error() {
-    // failed to connect
-});;
-```
-
-### close()
-Closes an existing socket and returns a promise.
-
-```js
-framing_socket.close().always(function on_close() {
-    // socket closed!
+framing_socket.connect(host, port, function on_connect(err) {
+    if (!err) {
+        // socket is now connected successfully...
+    }
 });
 ```
 
-### write(rpc_id, data)
-Write data to the socket and returns a promise for the response data.
+### close()
+Closes an existing socket.  This is a synchronous operation.
+
+```js
+framing_socket.close();
+```
+
+### write(rpc_id, data, callback)
+Write data to the socket and calls the callback for the response frame.
 The RPC ID is used to match the request and response together.
 
 ```js
 var rpc_id = 123;
 var data = new Buffer('abcd', 'utf8');
-framing_socket.write(rpc_id, data).then(function on_response(frame) {
-    // got result frame (Buffer)! do something with it.
+framing_socket.write(rpc_id, data, function on_frame(err, frame) {
+    if (!err) {
+        // got result frame (OffsetBuffer)! do something with it.
+    }
 });
 ```
 
 ### fail_pending_rpcs()
-Fails (rejects) all pending RPCs and calls their errbacks.
+Fails (rejects) all pending RPCs and calls their callbacks with an err.
 
 ```js
 var rpc_id = 123;
 var data = new Buffer('abcd', 'utf8');
-framing_socket.write(rpc_id, data).then(function on_response(frame) {
-    // let's assume no response arrives yet...
-}).otherwise(function on_error(err) {
-    console.log('Oops!');
+framing_socket.write(rpc_id, data, function on_frame(err, frame) {
+    if (err) {
+        console.log('Oops!');
+    } else {
+        // shouldn't get here
+    }
 });
 
 framing_socket.fail_pending_rpcs();

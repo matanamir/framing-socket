@@ -17,16 +17,16 @@
  *
  *
  * Methods:
- *  - connect(host, port):
- *      Creates a new socket and returns a promise.
+ *  - connect(host, port, callback):
+ *      Creates a new socket.
  *  - close():
- *      Closes an existing socket and returns a promise.
- *  - write(rpc_id, data):
- *      Write data to the socket and returns a promise for the response data.
+ *      Closes an existing socket.
+ *  - write(rpc_id, data, callback):
+ *      Write data to the socket and calls the callback for the response data.
  *      The RPC ID is used to match the request and response together.
  *  - fail_pending_rpcs():
  *      Fails (rejects) all pending RPCs and calls the errbacks of all queued
- *      promises.
+ *      callbacks.
  *
  *
  * Events published:
@@ -49,7 +49,6 @@ module.exports = function(FramingBuffer,
                           net,
                           events,
                           util,
-                          when,
                           errors,
                           logger) {
 
@@ -195,7 +194,7 @@ module.exports = function(FramingBuffer,
 
     /**
      * Establishes a socket connection to the provided host and port.
-     * Returns a promise that is resolved when the connection state is
+     * The callback is called when the connection state is
      * finalized (failure or success).
      */
     FramingSocket.prototype.connect = function(host, port, callback) {
@@ -222,16 +221,15 @@ module.exports = function(FramingBuffer,
 
     /**
      * Closes any active connection.  The user should not expect a 'disconnected'
-     * event when calling this. This returns a promise, but resolves immediately
-     * since the clean up steps are synchronous.
+     * event when calling this.
      */
     FramingSocket.prototype.close = function() {
         this.clean_up_socket();
     };
 
     /**
-     * Writes bytes to the open socket. It returns a promise which is resolved when
-     * the return data is available for this (we're assuming a request/response protocol).
+     * Writes bytes to the open socket. The callback is called when the return data is available
+     * for this (we're assuming a request/response protocol).
      * This involved framing the results properly and matching the proper frame by the RPC ID.
      */
     FramingSocket.prototype.write = function(rpc_id, data, callback) {
@@ -362,7 +360,7 @@ module.exports = function(FramingBuffer,
     /**
      * When a full frame comes in via the FrameBuffer, extract the RPC ID
      * and cross reference it with our pending callbacks so the proper
-     * promise can be resolved.
+     * callback can be called.
      */
     FramingSocket.prototype.on_frame = function(full_frame) {
         var rpc_id = this.rpc_id_reader(full_frame);
