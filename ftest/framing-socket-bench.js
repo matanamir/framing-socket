@@ -13,14 +13,18 @@
  *     <num_sockets>    = Number of clients to create [5]
  *     <num_rpcs>       = Number of total RPCs each client
  *                        will try to complete. [20000]
+ *
+ * Host can have a special value called 'loopback' which will disable networking
+ * altogether. A special socket implementation will just emit all the data that
+ * is written to it (echo).
  */
 
-var FramingSocket = require_FramingSocket(false),
-    metrics = require('metrics'),
-    host = process.argv[2] || 'localhost',
+var host = process.argv[2] || 'localhost',
     port = parseInt(process.argv[3], 10) || 8118,
     num_sockets = parseInt(process.argv[4], 10) || 5,
     num_rpcs = parseInt(process.argv[5], 10) || 20000,
+    FramingSocket = require_FramingSocket((host === 'loopback')),
+    metrics = require('metrics'),
     tests = [],
     rpc_id = 0; // incrementing rpc id to use for the frame
 
