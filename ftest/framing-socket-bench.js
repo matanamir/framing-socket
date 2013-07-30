@@ -230,7 +230,6 @@ function require_FramingSocket(loopback_socket) {
         events = require('events'),
         debug = false,
         net = loopback_socket ? require('./loopback-net.js') : require('net'),
-        when = require('when'),
         errors = require('../errors.js')(util);
 
     return require('../framing-socket.js')(
@@ -240,7 +239,6 @@ function require_FramingSocket(loopback_socket) {
         net,
         events,
         util,
-        when,
         errors,
         console
     );
