@@ -145,7 +145,9 @@ Test.prototype.create_socket = function(socket_id, callback) {
     }
 
     // keep track of when the socket was created
-    socket.metrics_enabled = metrics_enabled;
+    if (metrics_enabled) {
+        socket.enable_metrics();
+    }
     socket._create_time = Date.now();
     socket.on('disconnected', on_socket_disconnected);
     this.sockets[socket_id] = socket;

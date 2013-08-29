@@ -26,14 +26,14 @@ process.on('uncaughtException', function(err) {
 });
 
 test('connect()', function(t) {
-    t.test('Returns a promise which resolves on a successful connection', function(t) {
+    t.test('Calls the callback on a successful connection', function(t) {
         var con = new FramingSocket();
 
         function on_connect(err) {
             if (err) {
                 errback(t, err);
             }
-            t.ok(true, 'Promise resolves once the connection is complete.');
+            t.ok(true, 'Callback called once the connection is complete.');
             t.ok((con.socket !== null), 'Socket is active');
             t.end();
         }
@@ -53,7 +53,7 @@ test('connect()', function(t) {
 
         function on_connect2(err) {
             if (err) {
-                t.ok(true, 'Promise resolves once the connection is complete.');
+                t.ok(true, 'Callback called once the connection is complete.');
                 t.ok((con.socket !== null), 'Socket is active');
                 t.end();
             } else {
@@ -155,7 +155,7 @@ test('write()', function(t) {
         t.test('Write fails if max_buffer_size is passed', function(t) {
             after_connection(t, function on_connect(con) {
                 con.socket.bufferSize = con.max_buffer_bytes + 1;
-                promise = con.write(1, buf, function on_frame(err) {
+                con.write(1, buf, function on_frame(err) {
                     if (err) {
                         t.ok(true, 'Write rejected since max_buffer_size is passed.');
                         t.ok((err instanceof errors.BufferOverflowError), 'Error is of type BufferOverflowError');
@@ -197,7 +197,7 @@ test('resolve_callback()', function(t) {
                 errback(t, err);
                 return;
             }
-            t.ok(true, 'Promise is resolved properly');
+            t.ok(true, 'Callback is called properly');
             t.ok(buffer_equal(full_frame, response_frame), 'Frame returned is the same as received via socket data');
             t.equal(Object.keys(con.pending_callbacks).length, 0, 'FramingSocket cleaned up pending deferred');
             t.end();

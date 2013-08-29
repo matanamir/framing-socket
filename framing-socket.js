@@ -190,15 +190,13 @@ module.exports = function(FramingBuffer,
         this.rpc_id_writer = options.rpc_id_writer || rpc_id_writer;
 
         /**
-         * If true, metrics will be enabled for performance sensitive points
+         * Should be set directly.  Use the enable_metrics() and disable_metrics()
+         * functions. I need to do this because it seems these timers set internal
+         * timers of their own which can block proper clean up of processes
+         * - so only set if needed.
          */
         this.metrics_enabled = false;
-        this.metrics = {
-            connect_timer: new metrics.Timer(),
-            write_timer: new metrics.Timer(),
-            write_frame_timer: new metrics.Timer(),
-            response_timer: new metrics.Timer()
-        };
+        this.metrics = null;
 
         events.EventEmitter.call(this);
     }
@@ -528,6 +526,21 @@ module.exports = function(FramingBuffer,
             this.metrics.write_frame_timer.update(Date.now() - now);
         }
         return result;
+    };
+
+    FramingSocket.prototype.enable_metrics = function() {
+        this.metrics_enabled = true;
+        this.metrics = {
+            connect_timer: new metrics.Timer(),
+            write_timer: new metrics.Timer(),
+            write_frame_timer: new metrics.Timer(),
+            response_timer: new metrics.Timer()
+        };
+    };
+
+    FramingSocket.prototype.disable_metrics = function() {
+        this.metrics_enabled = false;
+        this.metrics = null;
     };
 
     FramingSocket.prototype.get_metrics = function() {
