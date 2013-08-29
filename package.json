@@ -6,12 +6,12 @@
     "main": "index.js",
     "dependencies": {
         "framing-buffer": "*",
-        "offset-buffer": "*"
+        "offset-buffer": "*",
+        "metrics": "*"
     },
     "devDependencies": {
         "tap": "*",
         "sinon": "*",
-        "metrics": "*",
         "test-socket-server": "*"
     },
     "license": {

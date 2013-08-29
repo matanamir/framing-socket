@@ -46,6 +46,7 @@
 module.exports = function(FramingBuffer,
                           OffsetBuffer,
                           debug,
+                          metrics,
                           net,
                           events,
                           util,
@@ -188,6 +189,17 @@ module.exports = function(FramingBuffer,
          */
         this.rpc_id_writer = options.rpc_id_writer || rpc_id_writer;
 
+        /**
+         * If true, metrics will be enabled for performance sensitive points
+         */
+        this.metrics_enabled = false;
+        this.metrics = {
+            connect_timer: new metrics.Timer(),
+            write_timer: new metrics.Timer(),
+            write_frame_timer: new metrics.Timer(),
+            response_timer: new metrics.Timer()
+        };
+
         events.EventEmitter.call(this);
     }
     util.inherits(FramingSocket, events.EventEmitter);
@@ -198,7 +210,8 @@ module.exports = function(FramingBuffer,
      * finalized (failure or success).
      */
     FramingSocket.prototype.connect = function(host, port, callback) {
-        var self = this;
+        var self = this,
+            now = Date.now();
 
         if (this.socket) {
             callback(new errors.AlreadyConnectedError('Already connected to: ' + this.name));
@@ -213,6 +226,9 @@ module.exports = function(FramingBuffer,
             host: host,
             port: port
         }, function on_connect() {
+            if (self.metrics_enabled) {
+                self.metrics.connect_timer.update(Date.now() - now);
+            }
             self.on_socket_connect();
             callback();
         });
@@ -234,6 +250,7 @@ module.exports = function(FramingBuffer,
      */
     FramingSocket.prototype.write = function(rpc_id, data, callback) {
         var self = this,
+            now = Date.now(),
             rpc_key = create_rpc_key(rpc_id),
             socket = this.socket;
 
@@ -280,9 +297,13 @@ module.exports = function(FramingBuffer,
         // We could possible keep track of "expired" RPCs if we find callbacks get orphaned w/o a matching
         // return frame.
         this.pending_callbacks[rpc_key] = {
-            timestamp: process.hrtime(),
+            timestamp: Date.now(),
+            hrtime: process.hrtime(),
             callback: callback
         };
+        if (this.metrics_enabled) {
+            this.metrics.write_timer.update(Date.now() - now);
+        }
     };
 
     FramingSocket.prototype.on_socket_connect = function() {
@@ -387,13 +408,16 @@ module.exports = function(FramingBuffer,
         }
 
         if (debug) {
-            diff_hrtime = process.hrtime(pending_callback.timestamp);
+            diff_hrtime = process.hrtime(pending_callback.hrtime);
             logger.log('Received frame for rpc: ' + rpc_key + ' with size: ' + frame.buf.length +
                 '.  Took: ' + ((diff_hrtime[0] * 1e9) + diff_hrtime[1]) + 'ns');
         }
 
         // remove this pending callback from the list
         delete this.pending_callbacks[rpc_key];
+        if (this.metrics_enabled) {
+            this.metrics.response_timer.update(Date.now() - pending_callback.timestamp);
+        }
         pending_callback.callback(null, frame);
     };
 
@@ -490,14 +514,24 @@ module.exports = function(FramingBuffer,
      * back pressure (the same way socket.write()) works.
      */
     FramingSocket.prototype.write_frame = function(socket, rpc_id, data) {
-        var frame_length_size = this.framing_buffer.frame_length_size,
+        var now = Date.now(),
+            frame_length_size = this.framing_buffer.frame_length_size,
             rpc_id_size = this.rpc_id_size,
-            frame = new OffsetBuffer(rpc_id_size + frame_length_size + data.length);
+            frame = new OffsetBuffer(rpc_id_size + frame_length_size + data.length),
+            result;
 
         this.frame_length_writer(frame, data.length + rpc_id_size);
         this.rpc_id_writer(frame, rpc_id);
         frame.copyFrom(data);
-        return socket.write(frame.buf);
+        result = socket.write(frame.buf);
+        if (this.metrics_enabled) {
+            this.metrics.write_frame_timer.update(Date.now() - now);
+        }
+        return result;
+    };
+
+    FramingSocket.prototype.get_metrics = function() {
+        return Object.keys(this.metrics);
     };
 
     // Default readers / writers

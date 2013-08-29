@@ -25,6 +25,8 @@ var host = process.argv[2] || 'localhost',
     num_rpcs = parseInt(process.argv[5], 10) || 20000,
     FramingSocket = require_FramingSocket((host === 'loopback')),
     metrics = require('metrics'),
+    util = require('util'),
+    metrics_enabled = false,
     tests = [],
     rpc_id = 0; // incrementing rpc id to use for the frame
 
@@ -143,6 +145,7 @@ Test.prototype.create_socket = function(socket_id, callback) {
     }
 
     // keep track of when the socket was created
+    socket.metrics_enabled = metrics_enabled;
     socket._create_time = Date.now();
     socket.on('disconnected', on_socket_disconnected);
     this.sockets[socket_id] = socket;
@@ -225,6 +228,11 @@ Test.prototype.print_stats = function () {
         left_pad((num_rpcs / (duration / 1000)).toFixed(2), 8) + " ops/sec, " +
         left_pad(this.rpcs_failed, 6) + " RPCs rejected"
     );
+    if (metrics_enabled) {
+        this.sockets.forEach(function (socket) {
+            console.log(format_metrics_data(socket));
+        });
+    }
 };
 
 function require_FramingSocket(loopback_socket) {
@@ -232,6 +240,7 @@ function require_FramingSocket(loopback_socket) {
         OffsetBuffer = require('offset-buffer'),
         util = require('util'),
         events = require('events'),
+        metrics = require('metrics'),
         debug = false,
         net = loopback_socket ? require('./loopback-net.js') : require('net'),
         errors = require('../errors.js')(util);
@@ -240,6 +249,7 @@ function require_FramingSocket(loopback_socket) {
         FramingBuffer,
         OffsetBuffer,
         debug,
+        metrics,
         net,
         events,
         util,
@@ -273,6 +283,19 @@ function format_histogram_data(histogram) {
             left_pad(obj.mean.toFixed(2), 7) + "/" +
             left_pad(obj.p95.toFixed(2), 7)
         );
+}
+
+/**
+ * Fancy formats the FramingSocket's metrics data (if collected)
+ */
+function format_metrics_data(socket) {
+    var line = '',
+        metric;
+    Object.keys(socket.metrics).forEach(function (key) {
+        metric = socket.metrics[key];
+        line += key + ': ' + util.inspect(metric.printObj()) + '\n';
+    });
+    return line;
 }
 
 function next() {
